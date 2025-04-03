@@ -66,3 +66,6 @@ make install-deps
 
 4. **Reallocation**:
    - `buddy_realloc` resizes a block by either keeping it in place or allocating a new block
+  
+## References
+https://manpages.ubuntu.com/
