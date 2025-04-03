@@ -133,6 +133,174 @@ void test_buddy_init(void)
     }
 }
 
+void test_btok(void)
+{
+    fprintf(stderr, "->Testing btok function\n");
+
+    TEST_ASSERT_EQUAL(0, btok(0));
+    TEST_ASSERT_EQUAL(0, btok(1));
+    TEST_ASSERT_EQUAL(1, btok(2));
+    TEST_ASSERT_EQUAL(2, btok(3));
+    TEST_ASSERT_EQUAL(2, btok(4));
+    TEST_ASSERT_EQUAL(3, btok(5));
+    TEST_ASSERT_EQUAL(10, btok(1024)); 
+    TEST_ASSERT_EQUAL(20, btok(1048576));
+}
+
+void test_buddy_calc(void)
+{
+    fprintf(stderr, "->Testing buddy_calc function\n");
+
+    struct buddy_pool pool;
+    size_t size = UINT64_C(1) << 5;
+    buddy_init(&pool, size);
+
+    struct avail *base = (struct avail *)pool.base;
+
+    struct avail *block = base;
+    block->kval = 3;
+
+    struct avail *buddy = buddy_calc(&pool, block);
+
+    size_t offset = (size_t)((char *)block - (char *)pool.base);
+    size_t expected_offset = offset ^ (1 << block->kval);
+    struct avail *expected_buddy = (struct avail *)((char *)pool.base + expected_offset);
+
+    TEST_ASSERT_EQUAL_PTR(expected_buddy, buddy);
+
+    buddy_destroy(&pool);
+}
+
+void test_buddy_malloc_multiple_small(void)
+{
+    fprintf(stderr, "->Testing multiple small allocations\n");
+    struct buddy_pool pool;
+    size_t pool_size = UINT64_C(1) << MIN_K;
+    buddy_init(&pool, pool_size);
+
+    void *block1 = buddy_malloc(&pool, 1);
+    void *block2 = buddy_malloc(&pool, 1);
+    void *block3 = buddy_malloc(&pool, 1);
+
+    assert(block1 != NULL);
+    assert(block2 != NULL);
+    assert(block3 != NULL);
+    assert(block1 != block2 && block2 != block3 && block1 != block3);
+
+    buddy_free(&pool, block1);
+    buddy_free(&pool, block2);
+    buddy_free(&pool, block3);
+
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
+void test_buddy_free_and_reallocate(void)
+{
+    fprintf(stderr, "->Testing freeing and reallocating\n");
+    struct buddy_pool pool;
+    size_t pool_size = UINT64_C(1) << MIN_K;
+    buddy_init(&pool, pool_size);
+
+    void *block1 = buddy_malloc(&pool, 1);
+    assert(block1 != NULL);
+
+    buddy_free(&pool, block1);
+
+    void *block2 = buddy_malloc(&pool, 1);
+    assert(block2 != NULL);
+    assert(block1 == block2);
+
+    buddy_free(&pool, block2);
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
+void test_buddy_malloc_different_sizes(void)
+{
+    fprintf(stderr, "->Testing allocations of different sizes\n");
+    struct buddy_pool pool;
+    size_t pool_size = UINT64_C(1) << MIN_K;
+    buddy_init(&pool, pool_size);
+
+    void *block1 = buddy_malloc(&pool, 1);
+    void *block2 = buddy_malloc(&pool, 16);
+    void *block3 = buddy_malloc(&pool, 64);
+
+    assert(block1 != NULL);
+    assert(block2 != NULL);
+    assert(block3 != NULL);
+
+    buddy_free(&pool, block1);
+    buddy_free(&pool, block2);
+    buddy_free(&pool, block3);
+
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
+void test_buddy_exhaust_pool(void)
+{
+    fprintf(stderr, "->Testing pool exhaustion\n");
+    struct buddy_pool pool;
+    size_t pool_size = UINT64_C(1) << MIN_K;
+    buddy_init(&pool, pool_size);
+
+    void *block1 = buddy_malloc(&pool, pool_size - sizeof(struct avail));
+    assert(block1 != NULL);
+
+    void *block2 = buddy_malloc(&pool, 1);
+    assert(block2 == NULL);
+    assert(errno == ENOMEM);
+
+    buddy_free(&pool, block1);
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
+void test_buddy_realloc(void)
+{
+    fprintf(stderr, "->Testing buddy_realloc\n");
+    struct buddy_pool pool;
+    size_t pool_size = UINT64_C(1) << MIN_K;
+    buddy_init(&pool, pool_size);
+
+    void *block = buddy_malloc(&pool, 16);
+    assert(block != NULL);
+
+    void *larger_block = buddy_realloc(&pool, block, 32);
+    assert(larger_block != NULL);
+    assert(larger_block != block);
+
+    void *smaller_block = buddy_realloc(&pool, larger_block, 8);
+    assert(smaller_block != NULL);
+
+    void *freed_block = buddy_realloc(&pool, smaller_block, 0);
+    assert(freed_block == NULL);
+
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
+void test_buddy_invalid_inputs(void)
+{
+    fprintf(stderr, "->Testing invalid inputs\n");
+    struct buddy_pool pool;
+    size_t pool_size = UINT64_C(1) << MIN_K;
+    buddy_init(&pool, pool_size);
+
+    void *block = buddy_malloc(NULL, 16);
+    assert(block == NULL);
+
+    block = buddy_malloc(&pool, 0);
+    assert(block == NULL);
+
+    buddy_free(&pool, NULL);
+
+    buddy_free(NULL, block);
+
+    buddy_destroy(&pool);
+}
 
 int main(void) {
   time_t t;
@@ -142,8 +310,16 @@ int main(void) {
   printf("Running memory tests.\n");
 
   UNITY_BEGIN();
+  RUN_TEST(test_buddy_invalid_inputs);
+  RUN_TEST(test_buddy_realloc);
+  RUN_TEST(test_buddy_exhaust_pool);
+  RUN_TEST(test_buddy_malloc_different_sizes);
+  RUN_TEST(test_buddy_free_and_reallocate);
+  RUN_TEST(test_buddy_malloc_multiple_small);
+  RUN_TEST(test_buddy_calc);
+  RUN_TEST(test_btok);
   RUN_TEST(test_buddy_init);
   RUN_TEST(test_buddy_malloc_one_byte);
   RUN_TEST(test_buddy_malloc_one_large);
-return UNITY_END();
+  return UNITY_END();
 }
