@@ -302,6 +302,85 @@ void test_buddy_invalid_inputs(void)
     buddy_destroy(&pool);
 }
 
+void test_buddy_allocate_and_free_all(void)
+{
+    fprintf(stderr, "->Testing allocate and free all blocks\n");
+    struct buddy_pool pool;
+    size_t pool_size = UINT64_C(1) << MIN_K;
+    buddy_init(&pool, pool_size);
+
+    void *blocks[pool_size / sizeof(struct avail)];
+    size_t i = 0;
+
+    // Allocate all blocks
+    while ((blocks[i] = buddy_malloc(&pool, 1)) != NULL) {
+        i++;
+    }
+
+    // Free all blocks
+    for (size_t j = 0; j < i; j++) {
+        buddy_free(&pool, blocks[j]);
+    }
+
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
+void test_buddy_random_allocations(void)
+{
+    fprintf(stderr, "->Testing random allocations and frees\n");
+    struct buddy_pool pool;
+    size_t pool_size = UINT64_C(1) << MIN_K;
+    buddy_init(&pool, pool_size);
+
+    void *blocks[100];
+    size_t block_count = 0;
+
+    for (int i = 0; i < 1000; i++) {
+        if (rand() % 2 == 0 && block_count < 100) {
+            // Allocate a random size
+            size_t size = (rand() % (pool_size / 4)) + 1;
+            void *block = buddy_malloc(&pool, size);
+            if (block) {
+                blocks[block_count++] = block;
+            }
+        } else if (block_count > 0) {
+            // Free a random block
+            size_t index = rand() % block_count;
+            buddy_free(&pool, blocks[index]);
+            blocks[index] = blocks[--block_count];
+        }
+    }
+
+    // Free remaining blocks
+    for (size_t i = 0; i < block_count; i++) {
+        buddy_free(&pool, blocks[i]);
+    }
+
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
+void test_buddy_coalescing(void)
+{
+    fprintf(stderr, "->Testing coalescing of buddy blocks\n");
+    struct buddy_pool pool;
+    size_t pool_size = UINT64_C(1) << MIN_K;
+    buddy_init(&pool, pool_size);
+
+    void *block1 = buddy_malloc(&pool, pool_size / 2 - sizeof(struct avail));
+    void *block2 = buddy_malloc(&pool, pool_size / 2 - sizeof(struct avail));
+
+    assert(block1 != NULL);
+    assert(block2 != NULL);
+
+    buddy_free(&pool, block1);
+    buddy_free(&pool, block2);
+
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
 int main(void) {
   time_t t;
   unsigned seed = (unsigned)time(&t);
@@ -310,6 +389,9 @@ int main(void) {
   printf("Running memory tests.\n");
 
   UNITY_BEGIN();
+  RUN_TEST(test_buddy_coalescing);
+  RUN_TEST(test_buddy_random_allocations);
+  RUN_TEST(test_buddy_allocate_and_free_all);
   RUN_TEST(test_buddy_invalid_inputs);
   RUN_TEST(test_buddy_realloc);
   RUN_TEST(test_buddy_exhaust_pool);
