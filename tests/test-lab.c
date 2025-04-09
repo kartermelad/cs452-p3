@@ -105,7 +105,7 @@ void test_buddy_malloc_one_large(void)
   //Verify that a call on an empty tool fails as expected and errno is set to ENOMEM.
   void *fail = buddy_malloc(&pool, 5);
   assert(fail == NULL);
-  assert(errno = ENOMEM);
+  assert(errno == ENOMEM);
 
   //Free the memory and then check to make sure everything is OK
   buddy_free(&pool, mem);
@@ -381,6 +381,116 @@ void test_buddy_coalescing(void)
     buddy_destroy(&pool);
 }
 
+void test_buddy_alignment(void)
+{
+    fprintf(stderr, "->Testing memory alignment\n");
+    struct buddy_pool pool;
+    size_t pool_size = UINT64_C(1) << MIN_K;
+    buddy_init(&pool, pool_size);
+
+    for (size_t size = 1; size <= pool_size / 2; size *= 2) {
+        void *block = buddy_malloc(&pool, size);
+        assert(block != NULL);
+        assert(((uintptr_t)block & (size - 1)) == 0); // Check alignment
+        buddy_free(&pool, block);
+    }
+
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
+void test_buddy_fragmentation(void)
+{
+    fprintf(stderr, "->Testing fragmentation handling\n");
+    struct buddy_pool pool;
+    size_t pool_size = UINT64_C(1) << MIN_K;
+    buddy_init(&pool, pool_size);
+
+    void *block1 = buddy_malloc(&pool, 1);
+    void *block2 = buddy_malloc(&pool, 1);
+    void *block3 = buddy_malloc(&pool, 1);
+
+    buddy_free(&pool, block2); // Create a gap
+    void *block4 = buddy_malloc(&pool, 1); // Should reuse the gap
+    assert(block4 == block2);
+
+    buddy_free(&pool, block1);
+    buddy_free(&pool, block3);
+    buddy_free(&pool, block4);
+
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
+void test_buddy_large_allocation(void)
+{
+    fprintf(stderr, "->Testing allocation larger than pool size\n");
+    struct buddy_pool pool;
+    size_t pool_size = UINT64_C(1) << MIN_K;
+    buddy_init(&pool, pool_size);
+
+    void *block = buddy_malloc(&pool, pool_size + 1); // Too large
+    assert(block == NULL);
+    assert(errno == ENOMEM);
+
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
+void test_buddy_stress(void)
+{
+    fprintf(stderr, "->Stress testing random allocations and frees\n");
+    struct buddy_pool pool;
+    size_t pool_size = UINT64_C(1) << MIN_K;
+    buddy_init(&pool, pool_size);
+
+    void *blocks[1000];
+    size_t block_count = 0;
+
+    for (int i = 0; i < 10000; i++) {
+        if (rand() % 2 == 0 && block_count < 1000) {
+            size_t size = (rand() % (pool_size / 4)) + 1;
+            void *block = buddy_malloc(&pool, size);
+            if (block) {
+                blocks[block_count++] = block;
+            }
+        } else if (block_count > 0) {
+            size_t index = rand() % block_count;
+            buddy_free(&pool, blocks[index]);
+            blocks[index] = blocks[--block_count];
+        }
+    }
+
+    for (size_t i = 0; i < block_count; i++) {
+        buddy_free(&pool, blocks[i]);
+    }
+
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
+void test_buddy_edge_cases(void)
+{
+    fprintf(stderr, "->Testing smallest and largest allocations\n");
+    struct buddy_pool pool;
+    size_t pool_size = UINT64_C(1) << MIN_K;
+    buddy_init(&pool, pool_size);
+
+    // Smallest allocation
+    void *small_block = buddy_malloc(&pool, 1);
+    assert(small_block != NULL);
+    buddy_free(&pool, small_block);
+
+    // Largest allocation
+    void *large_block = buddy_malloc(&pool, pool_size - sizeof(struct avail));
+    assert(large_block != NULL);
+    buddy_free(&pool, large_block);
+
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
+
 int main(void) {
   time_t t;
   unsigned seed = (unsigned)time(&t);
@@ -389,6 +499,10 @@ int main(void) {
   printf("Running memory tests.\n");
 
   UNITY_BEGIN();
+  RUN_TEST(test_buddy_edge_cases);
+  RUN_TEST(test_buddy_stress);
+  RUN_TEST(test_buddy_large_allocation);
+  RUN_TEST(test_buddy_fragmentation);
   RUN_TEST(test_buddy_coalescing);
   RUN_TEST(test_buddy_random_allocations);
   RUN_TEST(test_buddy_allocate_and_free_all);

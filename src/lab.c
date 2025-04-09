@@ -31,33 +31,37 @@
  */
 size_t btok(size_t bytes)
 {
-    if (bytes == 0) {
+    if (!bytes) {
         return 0;
     }
-    size_t k = 0;
-    size_t val = 1;
-    while (val < bytes) {
-        val <<= 1;
-        k++;
+
+    size_t k_val = 0;
+    size_t mult = UINT64_C(1) << k_val;
+    while (bytes > mult) {
+        k_val++;     
+        mult = UINT64_C(1) << k_val;
     }
-    return k;
+    return k_val;
 }
 
 struct avail *buddy_calc(struct buddy_pool *pool, struct avail *buddy)
 {
-    size_t offset = (size_t)((char *)buddy - (char *)pool->base);
-    offset ^= ((size_t)1 << buddy->kval);
-    return (struct avail *)((char *)pool->base + offset);
+    if (!pool || !buddy) {
+        return NULL;
+    }
+    size_t address = (size_t)buddy - (size_t)pool->base;
+    size_t operand = UINT64_C(1) << buddy->kval;
+    return (struct avail *)((address ^ operand) + (size_t)pool->base);
 }
 
 void *buddy_malloc(struct buddy_pool *pool, size_t size)
 {
     if (!pool || size == 0) {
-        errno = EINVAL; // Invalid input
+        errno = EINVAL;
         return NULL;
     }
 
-    // Calculate the block size for the requested size
+    // Determine the smallest block size (k value) that can fit the requested size.
     size_t needed_k = btok(size + sizeof(struct avail));
     if (needed_k < SMALLEST_K) {
         needed_k = SMALLEST_K;
@@ -70,7 +74,7 @@ void *buddy_malloc(struct buddy_pool *pool, size_t size)
     struct avail *block = NULL;
     size_t k;
 
-    // Find the first available block of right size
+    // Find the first available block of the required size or larger.
     for (k = needed_k; k <= pool->kval_m; k++) {
         struct avail *sentinel = &pool->avail[k];
         if (sentinel->next != sentinel) {
@@ -85,17 +89,17 @@ void *buddy_malloc(struct buddy_pool *pool, size_t size)
         return NULL;
     }
 
-    // Split the block until it matches the required size
+    // Split the block into smaller blocks until it matches the required size.
     while (block->kval > needed_k) {
         block->kval--;
         size_t new_k = block->kval;
-        
-        // Calculate the buddy block address
+
+        // Calculate the buddy block's address.
         struct avail *buddy = (struct avail *)((char *)block + ((size_t)1 << new_k));
-        buddy->tag = BLOCK_AVAIL;
+        buddy->tag = BLOCK_AVAIL; // Mark the buddy as available.
         buddy->kval = new_k;
 
-        // Add the buddy to the free list for size
+        // Add the buddy block to the free list for its size.
         struct avail *sentinel = &pool->avail[new_k];
         buddy->next = sentinel->next;
         buddy->prev = sentinel;
@@ -142,6 +146,7 @@ void buddy_free(struct buddy_pool *pool, void *ptr)
     sentinel->next->prev = block;
     sentinel->next = block;
 }
+  
 
 /**
  * @brief This is a simple version of realloc.
