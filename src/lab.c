@@ -57,17 +57,17 @@ struct avail *buddy_calc(struct buddy_pool *pool, struct avail *buddy)
 void *buddy_malloc(struct buddy_pool *pool, size_t size)
 {
     if (!pool || size == 0) {
-        errno = EINVAL;
+        errno = EINVAL; // Invalid input
         return NULL;
     }
 
-    // Determine the smallest block size (k value) that can fit the requested size.
+    // Calculate the block size for the requested size, including metadata.
     size_t needed_k = btok(size + sizeof(struct avail));
     if (needed_k < SMALLEST_K) {
-        needed_k = SMALLEST_K;
+        needed_k = SMALLEST_K; // Ensure the block size is at least the minimum.
     }
     if (needed_k > pool->kval_m) {
-        errno = ENOMEM;
+        errno = ENOMEM; // Not enough memory in the pool.
         return NULL;
     }
 
@@ -78,14 +78,14 @@ void *buddy_malloc(struct buddy_pool *pool, size_t size)
     for (k = needed_k; k <= pool->kval_m; k++) {
         struct avail *sentinel = &pool->avail[k];
         if (sentinel->next != sentinel) {
-            block = sentinel->next;
+            block = sentinel->next; // Take the first block from the free list.
             block->prev->next = block->next;
             block->next->prev = block->prev;
             break;
         }
     }
     if (!block) {
-        errno = ENOMEM;
+        errno = ENOMEM; // No suitable block found.
         return NULL;
     }
 
@@ -106,40 +106,44 @@ void *buddy_malloc(struct buddy_pool *pool, size_t size)
         sentinel->next->prev = buddy;
         sentinel->next = buddy;
     }
-    block->tag = BLOCK_RESERVED;
+    block->tag = BLOCK_RESERVED; // Mark the block as reserved.
 
+    // Return a pointer to the usable memory (after the metadata).
     return (void *)((char *)block + sizeof(struct avail));
 }
 
 void buddy_free(struct buddy_pool *pool, void *ptr)
 {
     if (!pool || !ptr) {
-        return;
+        return; // Do nothing if the pointer or pool is NULL.
     }
 
-    // Recover the block header from the user pointer
+    // Recover the block header from the user pointer.
     struct avail *block = (struct avail *)((char *)ptr - sizeof(struct avail));
-    block->tag = BLOCK_AVAIL;
+    block->tag = BLOCK_AVAIL; // Mark the block as available.
 
-    // Try to coalesce with buddy blocks
+    // Try to coalesce with buddy blocks.
     while (block->kval < pool->kval_m) {
         struct avail *buddy = buddy_calc(pool, block);
 
+        // Stop if the buddy is not available or not the same size.
         if (buddy->tag != BLOCK_AVAIL || buddy->kval != block->kval) {
             break;
         }
 
-        // Remove the buddy from the free list
+        // Remove the buddy from the free list.
         buddy->prev->next = buddy->next;
         buddy->next->prev = buddy->prev;
 
-        if (buddy < block)
-            block = buddy;
+        // Merge the buddy with the current block.
+        if (buddy < block) {
+            block = buddy; // Use the lower address as the new block.
+        }
 
-        block->kval++;
+        block->kval++; // Move to the next larger block size.
     }
 
-    // Add the block back to the free list
+    // Add the coalesced block back to the free list.
     struct avail *sentinel = &pool->avail[block->kval];
     block->next = sentinel->next;
     block->prev = sentinel;
